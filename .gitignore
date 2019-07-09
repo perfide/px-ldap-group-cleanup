@@ -1,3 +1,4 @@
 /.venv/
 /build/
 /dist/
+/px_ldap_group_cleanup.egg-info/
