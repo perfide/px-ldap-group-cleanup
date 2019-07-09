@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+
+"""LDAP group cleaner"""
+
+# Copyright:
+#   2019 P. H. <github.com/perfide>
+# License:
+#   BSD-2-Clause (BSD 2-Clause "Simplified" License)
+#   https://spdx.org/licenses/BSD-2-Clause.html
+
+# included
+import argparse
+import getpass
+import logging
+import os
+import sys
+import termios
+import tty
+
+# 3rd-party
+import ldap3  # pip3 install ldap3 / sudo apt-get install python3-ldap3
+import yaml  # pip3 install PyYAML / sudo apt-get install python3-yaml
+
+
+DUMMY_USER = 'cn=delme'
+
+LOG = logging.getLogger('px-ldap-group-cleanup')
+LOG.setLevel(logging.INFO)
+LOG_HANDLER = logging.StreamHandler()
+LOG_HANDLER.setLevel(logging.INFO)
+LOG.addHandler(LOG_HANDLER)
+
+
+class BadNoneValue(Exception):
+    """Raise an error if an argument is None"""
+    def __init__(self, argument):
+        self.argument = argument
+
+    def __str__(self):
+        return 'argument {}: can not be None'.format(self.argument)
+# end class BadNoneValue
+
+
+def getc():
+    """Read a tingle character from stdin
+
+    Arguments:
+        None
+
+    Returns:
+        str: a single character
+    """
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(sys.stdin.fileno())
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+# end def getc
+
+
+def force_getc(opts):
+    """Let the user chose from a list of characters
+
+    Arguments:
+        opts (iterable): allowed characters
+
+    Returns:
+        None
+    """
+    print('please press:', end='')
+    for key, desc in sorted(opts.items()):
+        print(' [{}] {}'.format(key, desc), end='')
+    print('')
+    while True:
+        c = getc()
+        if c == '\x03':
+            # ctrl+c
+            raise KeyboardInterrupt
+        if c in opts:
+            return c
+        print('you pressed {!r} which is not in [{}]'.format(
+            c,
+            ' '.join(opts.keys()),
+        ))
+    # never reached
+    return
+# end def force_getc
+
+
+def get_user_feedback():
+    """Search LDAP for inetOrgPerson objects
+
+    Args: None
+
+    Returns:
+        tuple: Modified ask_user and modify_group variables
+    """
+    ask_user = True
+    modify_group = False
+    opts = {
+        'y': 'yes once',
+        'n': 'no one',
+        'a': 'yes to all',
+        'q': 'no to all',
+    }
+    c = force_getc(opts)
+    if c == 'y':
+        modify_group = True
+    if c == 'a':
+        ask_user = False
+        modify_group = True
+    if c == 'q':
+        ask_user = False
+    return (ask_user, modify_group)
+# end def get_user_feedback
+
+
+def handle_group(conn, entry, user_dns, ask_user, modify_group):
+    """Search LDAP for inetOrgPerson objects
+
+    Args:
+        conn (ldap3.core.connection.Connection): The connected LDAP object
+        entry (dict): The items of a LDAP object
+        user_dns (set): The set of all known User-DNs
+        ask_user (bool): If User-Feedback is required
+        modify_group (bool): If the group should be cleaned
+
+    Returns:
+        tuple: Modified ask_user and modify_group variables
+    """
+    LOG.info('dn: "{}"'.format(entry['dn']))
+    LOG.info('cn: "{}"'.format('~'.join(entry['attributes']['cn'])))
+    LOG.info('description: "{}"'.format(
+        '~'.join(entry['attributes']['description'])))
+    unique_members = set(
+        [member.lower() for member in entry['attributes']['uniqueMember']])
+    keep_members = unique_members & user_dns
+    remove_members = unique_members - user_dns
+    LOG.info('count all: {}'.format(len(unique_members)))
+    LOG.info('count keep: {}'.format(len(keep_members)))
+    LOG.info('count remove: {}'.format(len(remove_members)))
+    if remove_members:
+        LOG.info('remove DNs:')
+        for remove_member in remove_members:
+            LOG.info('  {}'.format(remove_member))
+        if ask_user:
+            (ask_user, modify_group) = get_user_feedback()
+
+        if modify_group:
+            if not keep_members:
+                LOG.info('adding a dummy...')
+                conn.modify(
+                    entry['dn'],
+                    {'uniqueMember': [(ldap3.MODIFY_ADD, [DUMMY_USER])]})
+                if conn.result['result'] == 0:
+                    LOG.info('success')
+                else:
+                    LOG.info('modification failed: {} ({})'.format(
+                        conn.result['description'], conn.result['result']))
+                    LOG.info(conn.result)
+
+            LOG.info('removing...')
+            conn.modify(
+                entry['dn'],
+                {'uniqueMember': [(ldap3.MODIFY_DELETE, remove_members)]})
+            if conn.result['result'] == 0:
+                LOG.info('success')
+            else:
+                LOG.info('modification failed: {} ({})'.format(
+                    conn.result['description'], conn.result['result']))
+                LOG.info(conn.result)
+
+        else:
+            LOG.info('skipping...')
+    return (ask_user, modify_group)
+# end def handle_group
+
+
+def get_user_dns(conn, search_base):
+    """Search LDAP for inetOrgPerson objects
+
+    Args:
+        conn (ldap3.core.connection.Connection): a connected LDAP object
+        search_base (str): base-dn to be used for the search
+
+    Returns:
+        set: user-DNs
+    """
+    user_dns = set()
+    LOG.info('searching for inetOrgPerson')
+    search_result = conn.search(
+        search_base=search_base,
+        search_filter='(objectclass=inetOrgPerson)',
+        search_scope=ldap3.SUBTREE,
+        attributes=[])
+    if not search_result:
+        LOG.error('user-search failed')
+        return user_dns
+    LOG.info('search-results: {}'.format(len(conn.response)))
+    for entry in conn.response:
+        user_dns.add(entry['dn'].lower())
+    return user_dns
+# end def get_user_dns
+
+
+def prepare_parameters(arguments):
+    """Parse command-line arguments
+
+    Args:
+        arguments (list): command-line arguments without the programm-name
+
+    Returns:
+        dict: parsed arguments
+    """
+
+    config_path = os.path.join(
+        os.path.expanduser('~'), '.config', 'px-ldap-group-cleanup.yaml')
+    try:
+        with open(config_path) as fh:
+            cfg = yaml.safe_load(fh)
+    except FileNotFoundError:
+        LOG.warning('config not found at: {}'.format(config_path))
+        cfg = {}
+    if cfg is None:
+        LOG.warning('empty config found at: {}'.format(config_path))
+        cfg = {}
+
+    parser = argparse.ArgumentParser(
+        description='Use a yaml-config to render Jinja2 templates')
+    parser.add_argument(
+        '-s', '--server',
+        help='servers domain name')
+    parser.add_argument(
+        '-u', '--bind_dn',
+        help='users distingushed name')
+    parser.add_argument(
+        '-p', '--bind_pw',
+        help='users password')
+    parser.add_argument(
+        '-b', '--search_base',
+        help='base-dn for searches')
+    parser.set_defaults(**cfg)
+    namespace = parser.parse_args(arguments)
+
+    if namespace.server is None:
+        parser.print_usage()
+        raise BadNoneValue('-s/--server')
+    if namespace.bind_dn is None:
+        parser.print_usage()
+        raise BadNoneValue('-u/--bind_dn')
+    if namespace.bind_pw is None:
+        namespace.bind_pw = getpass.getpass()
+    if namespace.search_base is None:
+        parser.print_usage()
+        raise BadNoneValue('-b/--search_base')
+    return vars(namespace)
+# end def prepare_parameters
+
+
+def main(arguments):
+    """Handle the groups cleanup
+
+    Args:
+        arguments (list): command-line arguments without the programm-name
+
+    Returns:
+        int: exit code
+    """
+
+    ask_user = True
+    modify_group = False
+    parameters = prepare_parameters(arguments)
+
+    server = ldap3.Server(parameters['server'], get_info=ldap3.ALL)
+    conn = ldap3.Connection(
+        server,
+        user=parameters['bind_dn'],
+        password=parameters['bind_pw'],
+        auto_bind=False,
+        receive_timeout=2)
+
+    try:
+        start_tls_result = conn.start_tls()
+    except ldap3.core.exceptions.LDAPSocketOpenError as e:
+        LOG.error('failed to connect: {}'.format(e))
+        return 1
+    assert start_tls_result is True
+    LOG.debug('start_tls succeeded')
+    bind_result = conn.bind()
+    if not bind_result:
+        LOG.error('bind failed')
+        return 2
+    LOG.debug('bind succeeded')
+    user_dns = get_user_dns(conn, parameters['search_base'])
+    # Keep the dummy-user
+    user_dns.add(DUMMY_USER)
+    LOG.info('searching for groupOfUniqueNames')
+    search_result = conn.search(
+        search_base=parameters['search_base'],
+        search_filter='(objectclass=groupOfUniqueNames)',
+        search_scope=ldap3.SUBTREE,
+        attributes=['cn', 'uniqueMember', 'description'])
+    LOG.info('search_result {} ({})'.format(search_result, len(conn.response)))
+    LOG.info('')
+
+    for entry in conn.response:
+        (ask_user, modify_group) = handle_group(
+            conn, entry, user_dns, ask_user, modify_group)
+        LOG.info('')
+    return 0
+# def end main
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        LOG.error('\ninterrupted by keyboard')
+    except BadNoneValue as e:
+        LOG.error("{}: error: {}".format(sys.argv[0], e))
+
+# [EOF]
