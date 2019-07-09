@@ -12,11 +12,11 @@ Install dependencies
     pipenv install
 
 Execute the script
-    pipenv run ./px-ldap-groups-cleanup
+    pipenv run ./px-ldap-group-cleanup
 
 or
     pipenv shell
-    ./px-ldap-groups-cleanup
+    ./px-ldap-group-cleanup
 
 
 ### Pip
