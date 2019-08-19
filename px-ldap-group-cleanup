@@ -285,7 +285,11 @@ def main(arguments):
     try:
         start_tls_result = conn.start_tls()
     except ldap3.core.exceptions.LDAPSocketOpenError as e:
-        LOG.error('failed to connect: {}'.format(e))
+        LOG.error('failed to open socket: {}'.format(e))
+        return 1
+    except ldap3.core.exceptions.LDAPStartTLSError as e:
+        # wrap socket error: _ssl.c:835: The handshake operation timed out
+        LOG.error('failed to start TLS: {}'.format(e))
         return 1
     assert start_tls_result is True
     LOG.debug('start_tls succeeded')
