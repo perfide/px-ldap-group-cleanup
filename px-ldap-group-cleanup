@@ -49,6 +49,7 @@ def getc():
 
     Returns:
         str: a single character
+
     """
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -69,6 +70,7 @@ def force_getc(opts):
 
     Returns:
         None
+
     """
     print('please press:', end='')
     for key, desc in sorted(opts.items()):
@@ -97,6 +99,7 @@ def get_user_feedback():
 
     Returns:
         tuple: Modified ask_user and modify_group variables
+
     """
     ask_user = True
     modify_group = False
@@ -130,6 +133,7 @@ def handle_group(conn, entry, user_dns, ask_user, modify_group):
 
     Returns:
         tuple: Modified ask_user and modify_group variables
+
     """
     LOG.info('dn: "{}"'.format(entry['dn']))
     LOG.info('cn: "{}"'.format('~'.join(entry['attributes']['cn'])))
@@ -188,6 +192,7 @@ def get_user_dns(conn, search_base):
 
     Returns:
         set: user-DNs
+
     """
     user_dns = set()
     LOG.info('searching for inetOrgPerson')
@@ -214,8 +219,8 @@ def prepare_parameters(arguments):
 
     Returns:
         dict: parsed arguments
-    """
 
+    """
     config_path = os.path.join(
         os.path.expanduser('~'), '.config', 'px-ldap-group-cleanup.yaml')
     try:
@@ -268,8 +273,8 @@ def main(arguments):
 
     Returns:
         int: exit code
-    """
 
+    """
     ask_user = True
     modify_group = False
     parameters = prepare_parameters(arguments)
