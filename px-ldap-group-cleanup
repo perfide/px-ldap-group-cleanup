@@ -296,6 +296,10 @@ def main(arguments):
         # wrap socket error: _ssl.c:835: The handshake operation timed out
         LOG.error('failed to start TLS: {}'.format(e))
         return 1
+    except ldap3.core.exceptions.LDAPSocketReceiveError as e:
+        # error receiving data: timed out
+        LOG.error('timeout while connecting: {}'.format(e))
+        return 1
     assert start_tls_result is True
     LOG.debug('start_tls succeeded')
     bind_result = conn.bind()
