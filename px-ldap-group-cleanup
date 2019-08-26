@@ -93,7 +93,7 @@ def force_getc(opts):
 
 
 def get_user_feedback():
-    """Search LDAP for inetOrgPerson objects
+    """Ask user how to proceed
 
     Args: None
 
