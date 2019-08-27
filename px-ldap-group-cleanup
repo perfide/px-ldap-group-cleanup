@@ -236,31 +236,31 @@ def prepare_parameters(arguments):
     parser = argparse.ArgumentParser(
         description='Use a yaml-config to render Jinja2 templates')
     parser.add_argument(
-        '-s', '--server',
-        help='servers domain name')
+        '-H', '--host',
+        help='Domain Name, IP or LDAP-URL')
     parser.add_argument(
-        '-u', '--bind_dn',
+        '-D', '--bind-dn',
         help='users distingushed name')
     parser.add_argument(
-        '-p', '--bind_pw',
+        '-w', '--bind-pw',
         help='users password')
     parser.add_argument(
-        '-b', '--search_base',
+        '-b', '--search-base',
         help='base-dn for searches')
     parser.set_defaults(**cfg)
     namespace = parser.parse_args(arguments)
 
-    if namespace.server is None:
+    if namespace.host is None:
         parser.print_usage()
-        raise BadNoneValue('-s/--server')
+        raise BadNoneValue('-H/--host')
     if namespace.bind_dn is None:
         parser.print_usage()
-        raise BadNoneValue('-u/--bind_dn')
+        raise BadNoneValue('-D/--bind-dn')
     if namespace.bind_pw is None:
         namespace.bind_pw = getpass.getpass()
     if namespace.search_base is None:
         parser.print_usage()
-        raise BadNoneValue('-b/--search_base')
+        raise BadNoneValue('-b/--search-base')
     return vars(namespace)
 # end def prepare_parameters
 
