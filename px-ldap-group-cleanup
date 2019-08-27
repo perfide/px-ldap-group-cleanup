@@ -279,7 +279,7 @@ def main(arguments):
     modify_group = False
     parameters = prepare_parameters(arguments)
 
-    server = ldap3.Server(parameters['server'], get_info=ldap3.ALL)
+    server = ldap3.Server(parameters['host'], get_info=ldap3.ALL)
     conn = ldap3.Connection(
         server,
         user=parameters['bind_dn'],
